@@ -5,6 +5,7 @@ extern crate libc;
 #[macro_use]
 extern crate simple_error;
 
+use std::os::unix::io::IntoRawFd;
 use std::os::unix::io::FromRawFd;
 use std::os::unix::io::AsRawFd;
 use simple_error::SimpleError;
@@ -25,25 +26,20 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error> >  {
 
     let fork_result = nix::pty::forkpty(Some(&window), Some(&orig_attr))?;
 
-    let mut master_file : std::fs::File = unsafe {
-        std::fs::File::from_raw_fd(fork_result.master)
-    };
-
-    // this should print '/dev/ptmx' as the master device
-    // https://linux.die.net/man/4/ptmx
-    // Each file descriptor obtained by opening /dev/ptmx
-    // is an independent PTM with its own associated pseudoterminal slaves (PTS)
-    println!("master: {:?}", master_file);
-
     match fork_result.fork_result {
 
         // the child simply exec's into a shell
         nix::unistd::ForkResult::Child => {
-            println!("Executing child.");
+            // TODO: Figure out why executing other shells other than bash or sh
+            //       cause failure.
 
+            /*
             let shell = std::env::var_os("SHELL")
                 .unwrap_or(std::ffi::OsString::from("/bin/sh"))
                 .into_string().expect("We expected to convert from OString to String");
+             */
+
+            let shell = "/bin/bash";
 
             let c_str = std::ffi::CString::new(shell).expect("CString::new failed");
             nix::unistd::execv(&c_str, &[]);
@@ -51,8 +47,17 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error> >  {
 
         // the parent will relay data between terminal and pty master
         nix::unistd::ForkResult::Parent { child, .. } => {
+            let mut master_file : std::fs::File = unsafe {
+                std::fs::File::from_raw_fd(fork_result.master)
+            };
+
+            // this should print '/dev/ptmx' as the master device
+            // https://linux.die.net/man/4/ptmx
+            // Each file descriptor obtained by opening /dev/ptmx
+            // is an independent PTM with its own associated pseudoterminal slaves (PTS)
             println!("Executing parent.");
             println!("Child Pid: {:?}", child);
+            println!("Master Fd: {:?}", master_file);
 
             let mut output_file = std::fs::File::create("typescript")?;
 
@@ -87,6 +92,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error> >  {
                 // input and writes it to the terminal and file
                 if in_fds.contains(fork_result.master) {
                     let bytes_read = master_file.read(&mut buffer)?;
+
                     let bytes_written = stdout.write(&buffer[..bytes_read])?;
                     if  bytes_written != bytes_read {
                         bail!("partial failed read[{}]/write[{}] (stdout)", bytes_read, bytes_written);
