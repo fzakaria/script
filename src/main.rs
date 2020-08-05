@@ -13,6 +13,8 @@ use std::io::{Stdin, Read, Write};
 fn main() -> std::result::Result<(), Box<dyn std::error::Error> >  {
     // 1 -- First get the original terminal attributes
     let mut stdin = std::io::stdin();
+    let mut stdout = std::io::stdout();
+
     let orig_attr = nix::sys::termios::tcgetattr(stdin.as_raw_fd())?;
 
     let window : libc::winsize = unsafe {
@@ -52,7 +54,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error> >  {
             println!("Executing parent.");
             println!("Child Pid: {:?}", child);
 
-            let output_file = std::fs::File::create("typescript")?;
+            let mut output_file = std::fs::File::create("typescript")?;
 
             let mut tty = nix::sys::termios::tcgetattr(stdin.as_raw_fd())?;
             nix::sys::termios::cfmakeraw(&mut tty);
@@ -66,7 +68,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error> >  {
                 in_fds.insert(stdin.as_raw_fd());
                 in_fds.insert(fork_result.master);
 
-                let number_ready = nix::sys::select::select(None, Some(&mut in_fds), None, None, None)?;
+                let _ = nix::sys::select::select(None, Some(&mut in_fds), None, None, None)?;
 
                 // if the terminal has any input available, then the program reads some of that
                 // input and writes it to the pseudoterminal master
@@ -77,7 +79,22 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error> >  {
                     //flush it
                     master_file.flush()?;
                     if bytes_read != bytes_written {
-                        bail!("partial failed read[{}]/write[{}] of masterFd", bytes_read, bytes_written);
+                        bail!("partial failed read[{}]/write[{}] (masterFd)", bytes_read, bytes_written);
+                    }
+                }
+
+                // if the pseudterminal master has input available, this program reads some of that
+                // input and writes it to the terminal and file
+                if in_fds.contains(fork_result.master) {
+                    let bytes_read = master_file.read(&mut buffer)?;
+                    let bytes_written = stdout.write(&buffer[..bytes_read])?;
+                    if  bytes_written != bytes_read {
+                        bail!("partial failed read[{}]/write[{}] (stdout)", bytes_read, bytes_written);
+                    }
+
+                    let bytes_written = output_file.write(&buffer[..bytes_read])?;
+                    if bytes_written != bytes_read {
+                        bail!("partial failed read[{}]/write[{}] (output file)", bytes_read, bytes_written);
                     }
                 }
 
