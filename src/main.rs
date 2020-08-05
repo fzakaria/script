@@ -16,7 +16,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error> >  {
     let orig_attr = nix::sys::termios::tcgetattr(stdin.as_raw_fd())?;
 
     let window : libc::winsize = unsafe {
-        get_window(stdin)?
+        get_window(&stdin)?
     };
 
     println!("{:?}", window);
@@ -34,6 +34,8 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error> >  {
     println!("{:?}", master_file);
 
     match fork_result.fork_result {
+
+        // the child simply exec's into a shell
         nix::unistd::ForkResult::Child => {
             println!("Executing child.");
 
@@ -44,11 +46,24 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error> >  {
             let c_str = std::ffi::CString::new(shell).expect("CString::new failed");
             nix::unistd::execv(&c_str, &[]);
         }
+
+        // the parent will relay data between terminal and pty master
         nix::unistd::ForkResult::Parent { child, .. } => {
             println!("Executing parent.");
             println!("{:?}", child);
 
+            let output_file = std::fs::File::create("typescript")?;
+
+            let mut tty = nix::sys::termios::tcgetattr(stdin.as_raw_fd())?;
+            nix::sys::termios::cfmakeraw(&mut tty);
+
+            let mut in_fds = nix::sys::select::FdSet::new();
+            in_fds.insert(stdin.as_raw_fd());
+            in_fds.insert(fork_result.master);
+
             loop {
+
+                let number_ready = nix::sys::select::select(None, Some(&mut in_fds), None, None, None)?;
 
             }
         }
@@ -58,7 +73,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error> >  {
     Ok(())
 }
 
-unsafe fn get_window(stdin: Stdin) -> Result<libc::winsize, SimpleError> {
+unsafe fn get_window(stdin: &Stdin) -> Result<libc::winsize, SimpleError> {
     let mut window: std::mem::MaybeUninit<libc::winsize> = std::mem::MaybeUninit::uninit();
     let result = libc::ioctl(stdin.as_raw_fd(), libc::TIOCGWINSZ, window.as_mut_ptr());
     if result < 0 {
