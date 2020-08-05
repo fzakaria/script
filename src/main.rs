@@ -5,19 +5,55 @@ extern crate libc;
 #[macro_use]
 extern crate simple_error;
 
+use std::os::unix::io::FromRawFd;
 use std::os::unix::io::AsRawFd;
 use simple_error::SimpleError;
 use std::io::Stdin;
 
-fn main() -> Result<(), Box<dyn std::error::Error> >  {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error> >  {
     // 1 -- First get the original terminal attributes
     let stdin = std::io::stdin();
     let orig_attr = nix::sys::termios::tcgetattr(stdin.as_raw_fd())?;
 
-    unsafe {
-        let window = get_window(stdin)?;
-        println!("{:?}", window)
+    let window : libc::winsize = unsafe {
+        get_window(stdin)?
+    };
+
+    println!("{:?}", window);
+
+    let fork_result = nix::pty::forkpty(Some(&window), Some(&orig_attr))?;
+
+    let master_file : std::fs::File = unsafe {
+        std::fs::File::from_raw_fd(fork_result.master)
+    };
+
+    // this should print '/dev/ptmx' as the master device
+    // https://linux.die.net/man/4/ptmx
+    // Each file descriptor obtained by opening /dev/ptmx
+    // is an independent PTM with its own associated pseudoterminal slaves (PTS)
+    println!("{:?}", master_file);
+
+    match fork_result.fork_result {
+        nix::unistd::ForkResult::Child => {
+            println!("Executing child.");
+
+            let shell = std::env::var_os("SHELL")
+                .unwrap_or(std::ffi::OsString::from("/bin/sh"))
+                .into_string().expect("We expectd to convert from OString to String");
+
+            let c_str = std::ffi::CString::new(shell).expect("CString::new failed");
+            nix::unistd::execv(&c_str, &[]);
+        }
+        nix::unistd::ForkResult::Parent { child, .. } => {
+            println!("Executing parent.");
+            println!("{:?}", child);
+
+            loop {
+
+            }
+        }
     }
+
 
     Ok(())
 }
