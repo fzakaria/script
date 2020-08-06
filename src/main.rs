@@ -74,7 +74,15 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error> >  {
                 // if the terminal has any input available, then the program reads some of that
                 // input and writes it to the pseudoterminal master
                 if in_fds.contains(stdin.as_raw_fd()) {
-                    let bytes_read = stdin.read(&mut buffer)?;
+                    let bytes_read_result = stdin.read(&mut buffer);
+
+                    // IO error here is a happy case since the child process might have died
+                    // hide it by returning OK
+                    let bytes_read = match bytes_read_result {
+                        Ok(bytes_read) => bytes_read,
+                        Err(_) => return Ok(())
+                    };
+
                     let bytes_written = master_file.write(&buffer[..bytes_read])?;
 
                     //flush it
@@ -87,7 +95,14 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error> >  {
                 // if the pseudo-terminal master has input available, this program reads some of that
                 // input and writes it to the terminal and file
                 if in_fds.contains(fork_result.master) {
-                    let bytes_read = master_file.read(&mut buffer)?;
+                    let bytes_read_result = master_file.read(&mut buffer);
+
+                    // IO error here is a happy case since the child process might have died
+                    // hide it by returning OK
+                    let bytes_read = match bytes_read_result {
+                        Ok(bytes_read) => bytes_read,
+                        Err(_) => return Ok(())
+                    };
 
                     let bytes_written = stdout.write(&buffer[..bytes_read])?;
                     if  bytes_written != bytes_read {
