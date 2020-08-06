@@ -7,7 +7,7 @@ rustPlatform.buildRustPackage rec {
 
   buildInputs = [ ];
 
-  cargoSha256 = "1vwir85qc0nla148x5xw8ind50fcr3gwfvaxdj24mihrl57a68gb";
+  cargoSha256 = "1d2rws00gbkgngvks4801j1lrsq4z8xdyz8j4z5xib8a3sg6lg3z";
   verifyCargoDeps = true;
 
   meta = with stdenv.lib; {
