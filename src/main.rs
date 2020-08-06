@@ -15,6 +15,7 @@ fn run( stdin: &mut Stdin, stdout: &mut Stdout, fork_result: nix::pty::ForkptyRe
     match fork_result.fork_result {
 
         // the child simply exec's into a shell
+        // we check the SHELL environment variable otherwise default to /bin/sh
         nix::unistd::ForkResult::Child => {
             let shell = std::env::var_os("SHELL")
                 .unwrap_or(std::ffi::OsString::from("/bin/sh"))
@@ -35,7 +36,8 @@ fn run( stdin: &mut Stdin, stdout: &mut Stdout, fork_result: nix::pty::ForkptyRe
             // https://linux.die.net/man/4/ptmx
             // Each file descriptor obtained by opening /dev/ptmx
             // is an independent PTM with its own associated pseudoterminal slaves (PTS)
-            println!("Executing parent.");
+            println!("Starting scriptr...");
+            println!("Currently in parent process.");
             println!("Child Pid: {:?}", child);
             println!("Master Fd: {:?}", master_file);
 
@@ -57,7 +59,7 @@ fn run( stdin: &mut Stdin, stdout: &mut Stdout, fork_result: nix::pty::ForkptyRe
                 let _ = nix::sys::select::select(None, Some(&mut in_fds), None, None, None)?;
 
                 // if the terminal has any input available, then the program reads some of that
-                // input and writes it to the pseudoterminal master
+                // input and writes it to the pseudo-terminal master
                 if in_fds.contains(stdin.as_raw_fd()) {
                     let bytes_read_result = stdin.read(&mut buffer);
 
@@ -124,9 +126,10 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error> >  {
         get_window(&stdin)?
     };
 
+    // create a child process that is connected to this process via a pseudo-terminal
     let fork_result = nix::pty::forkpty(Some(&window), Some(&tty))?;
 
-    // run the script program
+    // run the script program read-print-loop
     let result = run(&mut stdin, &mut stdout, fork_result);
 
     // Restore the original tty settings to remove the non-canonical mode we set
