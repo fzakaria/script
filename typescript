@@ -1,18 +1,0 @@
-[?2004h]0;fmzakari@fmzakari-glaptop: ~/Development/scriptr[01;32mfmzakari@fmzakari-glaptop[00m:[01;34m~/Development/scriptr[00m$ a
-[?2004lbash: a: command not found
-[?2004h]0;fmzakari@fmzakari-glaptop: ~/Development/scriptr[01;32mfmzakari@fmzakari-glaptop[00m:[01;34m~/Development/scriptr[00m$ b
-[?2004lbash: b: command not found
-[?2004h]0;fmzakari@fmzakari-glaptop: ~/Development/scriptr[01;32mfmzakari@fmzakari-glaptop[00m:[01;34m~/Development/scriptr[00m$ c
-[?2004lbash: c: command not found
-[?2004h]0;fmzakari@fmzakari-glaptop: ~/Development/scriptr[01;32mfmzakari@fmzakari-glaptop[00m:[01;34m~/Development/scriptr[00m$ echo $SHELL
-[?2004l/bin/zsh
-[?2004h]0;fmzakari@fmzakari-glaptop: ~/Development/scriptr[01;32mfmzakari@fmzakari-glaptop[00m:[01;34m~/Development/scriptr[00m$ ??
-[?2004lbash: ??: command not found
-[?2004h]0;fmzakari@fmzakari-glaptop: ~/Development/scriptr[01;32mfmzakari@fmzakari-glaptop[00m:[01;34m~/Development/scriptr[00m$ echo $??
-[?2004l127?
-[?2004h]0;fmzakari@fmzakari-glaptop: ~/Development/scriptr[01;32mfmzakari@fmzakari-glaptop[00m:[01;34m~/Development/scriptr[00m$ ps
-[?2004l    PID TTY          TIME CMD
-1515539 pts/4    00:00:00 sh
-1515568 pts/4    00:00:00 ps
-[?2004h]0;fmzakari@fmzakari-glaptop: ~/Development/scriptr[01;32mfmzakari@fmzakari-glaptop[00m:[01;34m~/Development/scriptr[00m$ exit
-[?2004lexit

@@ -5,7 +5,6 @@ extern crate libc;
 #[macro_use]
 extern crate simple_error;
 
-use std::os::unix::io::IntoRawFd;
 use std::os::unix::io::FromRawFd;
 use std::os::unix::io::AsRawFd;
 use simple_error::SimpleError;
@@ -30,19 +29,13 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error> >  {
 
         // the child simply exec's into a shell
         nix::unistd::ForkResult::Child => {
-            // TODO: Figure out why executing other shells other than bash or sh
-            //       cause failure.
-
-            /*
             let shell = std::env::var_os("SHELL")
                 .unwrap_or(std::ffi::OsString::from("/bin/sh"))
                 .into_string().expect("We expected to convert from OString to String");
-             */
 
-            let shell = "/bin/bash";
 
             let c_str = std::ffi::CString::new(shell).expect("CString::new failed");
-            nix::unistd::execv(&c_str, &[]);
+            nix::unistd::execv(&c_str, &[&c_str])?;
         }
 
         // the parent will relay data between terminal and pty master
