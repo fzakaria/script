@@ -5,109 +5,112 @@ extern crate libc;
 #[macro_use]
 extern crate simple_error;
 
-use std::os::unix::io::FromRawFd;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::io::RawFd;
 use simple_error::SimpleError;
-use std::io::{Read, Write};
+use std::io::Write;
 
-fn run( stdin: RawFd, stdout: RawFd, fork_result: nix::pty::ForkptyResult) -> std::result::Result<(), Box<dyn std::error::Error> >  {
+struct Child {
+    shell: std::ffi::CString,
+}
 
-    match fork_result.fork_result {
+impl Child {
+    fn from_env() -> std::result::Result<Child, Box<dyn std::error::Error>> {
+        // we check the SHELL environment variable otherwise default
+        // to /bin/sh
+        let shell = std::env::var_os("SHELL")
+            .unwrap_or(std::ffi::OsString::from("/bin/sh"))
+            .into_string()
+            .map_err(|_| { SimpleError::new("could not decode SHELL environment variable") })?;
+        let shell = std::ffi::CString::new(shell)?;
+        Ok(Child{shell})
+    }
 
-        // the child simply exec's into a shell
-        // we check the SHELL environment variable otherwise default to /bin/sh
-        nix::unistd::ForkResult::Child => {
-            let shell = std::env::var_os("SHELL")
-                .unwrap_or(std::ffi::OsString::from("/bin/sh"))
-                .into_string().expect("We expected to convert from OString to String");
-
-
-            let c_str = std::ffi::CString::new(shell).expect("CString::new failed");
-            nix::unistd::execv(&c_str, &[&c_str])?;
+    fn run(&self) -> std::result::Result<(), Box<dyn std::error::Error>> {
+        // the child simply execs into the shell
+        match nix::unistd::execv(&self.shell, &[&self.shell]) {
+            Ok(_) => Ok(()),
+            Err(error) => Err(error.into()),
         }
+    }
+}
 
-        // the parent will relay data between terminal and pty master
-        nix::unistd::ForkResult::Parent { child, .. } => {
-            let mut master_file : std::fs::File = unsafe {
-                std::fs::File::from_raw_fd(fork_result.master)
-            };
+struct Parent {
+    child: nix::unistd::Pid,
+    stdin: RawFd,
+    stdout: RawFd,
+    master_pty: RawFd,
+    typescript: std::fs::File,
+}
 
-            // this should print '/dev/ptmx' as the master device
-            // https://linux.die.net/man/4/ptmx
-            // Each file descriptor obtained by opening /dev/ptmx
-            // is an independent PTM with its own associated pseudoterminal slaves (PTS)
-            println!("Starting scriptr...");
-            println!("Currently in parent process.");
-            println!("Child Pid: {:?}", child);
-            println!("Master Fd: {:?}", master_file);
+impl Parent {
+    fn stdin_raw_mode(&self) -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let mut tty = nix::sys::termios::tcgetattr(self.stdin)?;
+        nix::sys::termios::cfmakeraw(&mut tty);
+        nix::sys::termios::tcsetattr(self.stdin, nix::sys::termios::SetArg::TCSANOW, &tty)
+            .map_err(|err| { err.into() })
+    }
 
-            let mut output_file = std::fs::File::create("typescript")?;
+    fn run(&mut self) -> std::result::Result<(), Box<dyn std::error::Error>> {
+        println!("Starting scriptr...");
+        println!("Currently in parent process.");
+        println!("Child Pid: {:?}", self.child);
+        println!("Master Fd: {:?}", self.master_pty);
 
-            let mut tty = nix::sys::termios::tcgetattr(stdin)?;
-            nix::sys::termios::cfmakeraw(&mut tty);
-            nix::sys::termios::tcsetattr(stdin, nix::sys::termios::SetArg::TCSAFLUSH, &tty)?;
+        self.stdin_raw_mode()?;
 
-            let mut in_fds = nix::sys::select::FdSet::new();
+        let mut in_fds = nix::sys::select::FdSet::new();
+        let mut buffer = [0; 256];
+        loop {
+            in_fds.clear();
+            in_fds.insert(self.stdin);
+            in_fds.insert(self.master_pty);
 
-            let mut buffer = [0; 256];
-            loop {
+            let _ = nix::sys::select::select(None, Some(&mut in_fds), None, None, None)?;
 
-                in_fds.clear();
-                in_fds.insert(stdin);
-                in_fds.insert(fork_result.master);
+            // if the terminal has any input available, then the program reads some of that
+            // input and writes it to the pseudo-terminal master
+            if in_fds.contains(self.stdin) {
+                let bytes_read_result = nix::unistd::read(self.stdin, &mut buffer);
 
-                let _ = nix::sys::select::select(None, Some(&mut in_fds), None, None, None)?;
+                // IO error here is a happy case since the child process might have died
+                // hide it by returning OK
+                let bytes_read = match bytes_read_result {
+                    Ok(bytes_read) => bytes_read,
+                    Err(_) => return Ok(())
+                };
 
-                // if the terminal has any input available, then the program reads some of that
-                // input and writes it to the pseudo-terminal master
-                if in_fds.contains(stdin) {
-                    let bytes_read_result = nix::unistd::read(stdin, &mut buffer);
+                let bytes_written = nix::unistd::write(self.master_pty, &buffer[..bytes_read])?;
 
-                    // IO error here is a happy case since the child process might have died
-                    // hide it by returning OK
-                    let bytes_read = match bytes_read_result {
-                        Ok(bytes_read) => bytes_read,
-                        Err(_) => return Ok(())
-                    };
+                if bytes_read != bytes_written {
+                    bail!("partial failed read[{}]/write[{}] (masterFd)", bytes_read, bytes_written);
+                }
+            }
 
-                    let bytes_written = master_file.write(&buffer[..bytes_read])?;
+            // if the pseudo-terminal master has input available, this program reads some of that
+            // input and writes it to the terminal and file
+            if in_fds.contains(self.master_pty) {
+                let bytes_read_result = nix::unistd::read(self.master_pty, &mut buffer);
 
-                    //flush it
-                    master_file.flush()?;
-                    if bytes_read != bytes_written {
-                        bail!("partial failed read[{}]/write[{}] (masterFd)", bytes_read, bytes_written);
-                    }
+                // IO error here is a happy case since the child process might have died
+                // hide it by returning OK
+                let bytes_read = match bytes_read_result {
+                    Ok(bytes_read) => bytes_read,
+                    Err(_) => return Ok(())
+                };
+
+                let bytes_written = nix::unistd::write(self.stdout, &buffer[..bytes_read])?;
+                if  bytes_written != bytes_read {
+                    bail!("partial failed read[{}]/write[{}] (stdout)", bytes_read, bytes_written);
                 }
 
-                // if the pseudo-terminal master has input available, this program reads some of that
-                // input and writes it to the terminal and file
-                if in_fds.contains(fork_result.master) {
-                    let bytes_read_result = master_file.read(&mut buffer);
-
-                    // IO error here is a happy case since the child process might have died
-                    // hide it by returning OK
-                    let bytes_read = match bytes_read_result {
-                        Ok(bytes_read) => bytes_read,
-                        Err(_) => return Ok(())
-                    };
-
-                    let bytes_written = nix::unistd::write(stdout, &buffer[..bytes_read])?;
-                    if  bytes_written != bytes_read {
-                        bail!("partial failed read[{}]/write[{}] (stdout)", bytes_read, bytes_written);
-                    }
-
-                    let bytes_written = output_file.write(&buffer[..bytes_read])?;
-                    if bytes_written != bytes_read {
-                        bail!("partial failed read[{}]/write[{}] (output file)", bytes_read, bytes_written);
-                    }
+                let bytes_written = self.typescript.write(&buffer[..bytes_read])?;
+                if bytes_written != bytes_read {
+                    bail!("partial failed read[{}]/write[{}] (output file)", bytes_read, bytes_written);
                 }
-
             }
         }
     }
-
-    Ok(())
 }
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error> >  {
@@ -120,15 +123,30 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error> >  {
     let tty = nix::sys::termios::tcgetattr(stdin)?;
 
     // grab the window information for the fork
-    let window : libc::winsize = unsafe {
-        get_window(stdin)?
-    };
+    let window : libc::winsize = get_window(stdin)?;
+
+    let child = Child::from_env()?;
 
     // create a child process that is connected to this process via a pseudo-terminal
-    let fork_result = nix::pty::forkpty(Some(&window), Some(&tty))?;
+    let pty_fork_result = nix::pty::forkpty(Some(&window), Some(&tty))?;
 
-    // run the script program read-print-loop
-    let run_result = run(stdin, stdout, fork_result);
+    let run_result = match pty_fork_result.fork_result {
+        nix::unistd::ForkResult::Child => {
+            child.run()
+        },
+        nix::unistd::ForkResult::Parent { child } => {
+            let master_pty = pty_fork_result.master;
+            let typescript = std::fs::File::create("typescript")?;
+            let mut parent = Parent{
+                child,
+                stdin,
+                stdout,
+                master_pty,
+                typescript,
+            };
+            parent.run()
+        }
+    };
 
     // Restore the original tty settings to remove the non-canonical mode we set
     let reset_tty_result = nix::sys::termios::tcsetattr(stdin, nix::sys::termios::SetArg::TCSANOW, &tty)
@@ -137,12 +155,22 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error> >  {
     return run_result.and(reset_tty_result);
 }
 
-unsafe fn get_window(stdin: RawFd) -> Result<libc::winsize, SimpleError> {
-    let mut window: std::mem::MaybeUninit<libc::winsize> = std::mem::MaybeUninit::uninit();
-    let result = libc::ioctl(stdin, libc::TIOCGWINSZ, window.as_mut_ptr());
+fn get_window(stdin: RawFd) -> Result<libc::winsize, SimpleError> {
+    let mut window = libc::winsize{
+        ws_row: 0,
+        ws_col: 0,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+
+    let result = unsafe {
+        libc::ioctl(stdin, libc::TIOCGWINSZ, &mut window)
+    };
+
     if result < 0 {
         bail!("Failed to get window size.");
     }
-    Ok(window.assume_init())
+
+    Ok(window)
 }
 
