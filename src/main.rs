@@ -1,10 +1,12 @@
 extern crate pty;
 extern crate nix;
 extern crate libc;
+extern crate structopt;
 
 #[macro_use]
 extern crate simple_error;
 
+use structopt::StructOpt;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::io::RawFd;
 use simple_error::SimpleError;
@@ -111,7 +113,17 @@ impl Parent {
     }
 }
 
+#[derive(structopt::StructOpt)]
+#[structopt(name = "script")]
+struct Options {
+    #[structopt(default_value = "typescript")]
+    output: String,
+}
+
 fn main() -> std::result::Result<(), Box<dyn std::error::Error> >  {
+    let options = Options::from_args();
+    let typescript = std::fs::File::create(options.output)?;
+
     let stdin = std::io::stdin().as_raw_fd();
     let stdout = std::io::stdout().as_raw_fd();
 
@@ -134,7 +146,6 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error> >  {
         },
         nix::unistd::ForkResult::Parent { child } => {
             let master_pty = pty_fork_result.master;
-            let typescript = std::fs::File::create("typescript")?;
             let mut parent = Parent{
                 child,
                 stdin,
