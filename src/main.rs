@@ -28,10 +28,8 @@ impl Child {
 
     fn run(&self) -> std::result::Result<(), Box<dyn std::error::Error>> {
         // the child simply execs into the shell
-        match nix::unistd::execv(&self.shell, &[&self.shell]) {
-            Ok(_) => Ok(()),
-            Err(error) => Err(error.into()),
-        }
+        nix::unistd::execv(&self.shell, &[&self.shell])?;
+        Ok(())
     }
 }
 
@@ -47,8 +45,8 @@ impl Parent {
     fn stdin_raw_mode(&self) -> std::result::Result<(), Box<dyn std::error::Error>> {
         let mut tty = nix::sys::termios::tcgetattr(self.stdin)?;
         nix::sys::termios::cfmakeraw(&mut tty);
-        nix::sys::termios::tcsetattr(self.stdin, nix::sys::termios::SetArg::TCSANOW, &tty)
-            .map_err(|err| { err.into() })
+        nix::sys::termios::tcsetattr(self.stdin, nix::sys::termios::SetArg::TCSANOW, &tty)?;
+        Ok(())
     }
 
     fn run(&mut self) -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -149,10 +147,9 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error> >  {
     };
 
     // Restore the original tty settings to remove the non-canonical mode we set
-    let reset_tty_result = nix::sys::termios::tcsetattr(stdin, nix::sys::termios::SetArg::TCSANOW, &tty)
-        .map_err(|err| err.into());
+    nix::sys::termios::tcsetattr(stdin, nix::sys::termios::SetArg::TCSANOW, &tty)?;
 
-    return run_result.and(reset_tty_result);
+    run_result
 }
 
 fn get_window(stdin: RawFd) -> Result<libc::winsize, SimpleError> {
