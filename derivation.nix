@@ -7,12 +7,12 @@ rustPlatform.buildRustPackage rec {
 
   buildInputs = [ ];
 
-  cargoSha256 = "13gxfrc7vxhf32y0vcp8x6rcjxc1hsq81qj1l4p9qrj7899k617y";
+  cargoSha256 = "1vwir85qc0nla148x5xw8ind50fcr3gwfvaxdj24mihrl57a68gb";
   verifyCargoDeps = true;
 
   meta = with stdenv.lib; {
     description = "A reimplementation of script in Rust";
-    homepage = "https://example.org/my-project";
+    homepage = "https://github.com/fzakaria/scriptr";
     license = licenses.mit;
     platforms = platforms.linux;
     maintainers = [ "farid.m.zakaria@gmail.com" ];
