@@ -130,13 +130,13 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error> >  {
     let fork_result = nix::pty::forkpty(Some(&window), Some(&tty))?;
 
     // run the script program read-print-loop
-    let result = run(&mut stdin, &mut stdout, fork_result);
+    let run_result = run(&mut stdin, &mut stdout, fork_result);
 
     // Restore the original tty settings to remove the non-canonical mode we set
-    nix::sys::termios::tcsetattr(stdin.as_raw_fd(), nix::sys::termios::SetArg::TCSANOW, &tty)?;
+    let reset_tty_result = nix::sys::termios::tcsetattr(stdin.as_raw_fd(), nix::sys::termios::SetArg::TCSANOW, &tty)
+        .map_err(|err| err.into());
 
-    // return the original result
-    return result;
+    return run_result.and(reset_tty_result);
 }
 
 unsafe fn get_window(stdin: &Stdin) -> Result<libc::winsize, SimpleError> {
