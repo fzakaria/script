@@ -7,10 +7,11 @@ extern crate simple_error;
 
 use std::os::unix::io::FromRawFd;
 use std::os::unix::io::AsRawFd;
+use std::os::unix::io::RawFd;
 use simple_error::SimpleError;
-use std::io::{Stdin, Read, Write, Stdout};
+use std::io::{Read, Write};
 
-fn run( stdin: &mut Stdin, stdout: &mut Stdout, fork_result: nix::pty::ForkptyResult) -> std::result::Result<(), Box<dyn std::error::Error> >  {
+fn run( stdin: RawFd, stdout: RawFd, fork_result: nix::pty::ForkptyResult) -> std::result::Result<(), Box<dyn std::error::Error> >  {
 
     match fork_result.fork_result {
 
@@ -43,9 +44,9 @@ fn run( stdin: &mut Stdin, stdout: &mut Stdout, fork_result: nix::pty::ForkptyRe
 
             let mut output_file = std::fs::File::create("typescript")?;
 
-            let mut tty = nix::sys::termios::tcgetattr(stdin.as_raw_fd())?;
+            let mut tty = nix::sys::termios::tcgetattr(stdin)?;
             nix::sys::termios::cfmakeraw(&mut tty);
-            nix::sys::termios::tcsetattr(stdin.as_raw_fd(), nix::sys::termios::SetArg::TCSAFLUSH, &tty)?;
+            nix::sys::termios::tcsetattr(stdin, nix::sys::termios::SetArg::TCSAFLUSH, &tty)?;
 
             let mut in_fds = nix::sys::select::FdSet::new();
 
@@ -53,15 +54,15 @@ fn run( stdin: &mut Stdin, stdout: &mut Stdout, fork_result: nix::pty::ForkptyRe
             loop {
 
                 in_fds.clear();
-                in_fds.insert(stdin.as_raw_fd());
+                in_fds.insert(stdin);
                 in_fds.insert(fork_result.master);
 
                 let _ = nix::sys::select::select(None, Some(&mut in_fds), None, None, None)?;
 
                 // if the terminal has any input available, then the program reads some of that
                 // input and writes it to the pseudo-terminal master
-                if in_fds.contains(stdin.as_raw_fd()) {
-                    let bytes_read_result = stdin.read(&mut buffer);
+                if in_fds.contains(stdin) {
+                    let bytes_read_result = nix::unistd::read(stdin, &mut buffer);
 
                     // IO error here is a happy case since the child process might have died
                     // hide it by returning OK
@@ -91,7 +92,7 @@ fn run( stdin: &mut Stdin, stdout: &mut Stdout, fork_result: nix::pty::ForkptyRe
                         Err(_) => return Ok(())
                     };
 
-                    let bytes_written = stdout.write(&buffer[..bytes_read])?;
+                    let bytes_written = nix::unistd::write(stdout, &buffer[..bytes_read])?;
                     if  bytes_written != bytes_read {
                         bail!("partial failed read[{}]/write[{}] (stdout)", bytes_read, bytes_written);
                     }
@@ -100,9 +101,6 @@ fn run( stdin: &mut Stdin, stdout: &mut Stdout, fork_result: nix::pty::ForkptyRe
                     if bytes_written != bytes_read {
                         bail!("partial failed read[{}]/write[{}] (output file)", bytes_read, bytes_written);
                     }
-
-                    stdout.flush()?;
-                    output_file.flush()?;
                 }
 
             }
@@ -113,35 +111,35 @@ fn run( stdin: &mut Stdin, stdout: &mut Stdout, fork_result: nix::pty::ForkptyRe
 }
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error> >  {
-    let mut stdin = std::io::stdin();
-    let mut stdout = std::io::stdout();
+    let stdin = std::io::stdin().as_raw_fd();
+    let stdout = std::io::stdout().as_raw_fd();
 
     // Get the original terminal attributes
     // we want to restore the terminal to the original attributes
     // once the program finishes
-    let tty = nix::sys::termios::tcgetattr(stdin.as_raw_fd())?;
+    let tty = nix::sys::termios::tcgetattr(stdin)?;
 
     // grab the window information for the fork
     let window : libc::winsize = unsafe {
-        get_window(&stdin)?
+        get_window(stdin)?
     };
 
     // create a child process that is connected to this process via a pseudo-terminal
     let fork_result = nix::pty::forkpty(Some(&window), Some(&tty))?;
 
     // run the script program read-print-loop
-    let run_result = run(&mut stdin, &mut stdout, fork_result);
+    let run_result = run(stdin, stdout, fork_result);
 
     // Restore the original tty settings to remove the non-canonical mode we set
-    let reset_tty_result = nix::sys::termios::tcsetattr(stdin.as_raw_fd(), nix::sys::termios::SetArg::TCSANOW, &tty)
+    let reset_tty_result = nix::sys::termios::tcsetattr(stdin, nix::sys::termios::SetArg::TCSANOW, &tty)
         .map_err(|err| err.into());
 
     return run_result.and(reset_tty_result);
 }
 
-unsafe fn get_window(stdin: &Stdin) -> Result<libc::winsize, SimpleError> {
+unsafe fn get_window(stdin: RawFd) -> Result<libc::winsize, SimpleError> {
     let mut window: std::mem::MaybeUninit<libc::winsize> = std::mem::MaybeUninit::uninit();
-    let result = libc::ioctl(stdin.as_raw_fd(), libc::TIOCGWINSZ, window.as_mut_ptr());
+    let result = libc::ioctl(stdin, libc::TIOCGWINSZ, window.as_mut_ptr());
     if result < 0 {
         bail!("Failed to get window size.");
     }
