@@ -8,24 +8,9 @@ extern crate simple_error;
 use std::os::unix::io::FromRawFd;
 use std::os::unix::io::AsRawFd;
 use simple_error::SimpleError;
-use std::io::{Stdin, Read, Write};
+use std::io::{Stdin, Read, Write, Stdout};
 
-fn main() -> std::result::Result<(), Box<dyn std::error::Error> >  {
-    let mut stdin = std::io::stdin();
-    let mut stdout = std::io::stdout();
-
-    // 1 -- First get the original terminal attributes
-    // we want to restore the terminal to the original attributes
-    // once the program finishes
-    let orig_attr = nix::sys::termios::tcgetattr(stdin.as_raw_fd())?;
-
-    let window : libc::winsize = unsafe {
-        get_window(&stdin)?
-    };
-
-    println!("{:?}", window);
-
-    let fork_result = nix::pty::forkpty(Some(&window), Some(&orig_attr))?;
+fn run( stdin: &mut Stdin, stdout: &mut Stdout, fork_result: nix::pty::ForkptyResult) -> std::result::Result<(), Box<dyn std::error::Error> >  {
 
     match fork_result.fork_result {
 
@@ -122,8 +107,33 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error> >  {
         }
     }
 
-
     Ok(())
+}
+
+fn main() -> std::result::Result<(), Box<dyn std::error::Error> >  {
+    let mut stdin = std::io::stdin();
+    let mut stdout = std::io::stdout();
+
+    // Get the original terminal attributes
+    // we want to restore the terminal to the original attributes
+    // once the program finishes
+    let tty = nix::sys::termios::tcgetattr(stdin.as_raw_fd())?;
+
+    // grab the window information for the fork
+    let window : libc::winsize = unsafe {
+        get_window(&stdin)?
+    };
+
+    let fork_result = nix::pty::forkpty(Some(&window), Some(&tty))?;
+
+    // run the script program
+    let result = run(&mut stdin, &mut stdout, fork_result);
+
+    // Restore the original tty settings to remove the non-canonical mode we set
+    nix::sys::termios::tcsetattr(stdin.as_raw_fd(), nix::sys::termios::SetArg::TCSANOW, &tty)?;
+
+    // return the original result
+    return result;
 }
 
 unsafe fn get_window(stdin: &Stdin) -> Result<libc::winsize, SimpleError> {
