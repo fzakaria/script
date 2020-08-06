@@ -11,10 +11,12 @@ use simple_error::SimpleError;
 use std::io::{Stdin, Read, Write};
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error> >  {
-    // 1 -- First get the original terminal attributes
     let mut stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
 
+    // 1 -- First get the original terminal attributes
+    // we want to restore the terminal to the original attributes
+    // once the program finishes
     let orig_attr = nix::sys::termios::tcgetattr(stdin.as_raw_fd())?;
 
     let window : libc::winsize = unsafe {
@@ -56,6 +58,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error> >  {
 
             let mut tty = nix::sys::termios::tcgetattr(stdin.as_raw_fd())?;
             nix::sys::termios::cfmakeraw(&mut tty);
+            nix::sys::termios::tcsetattr(stdin.as_raw_fd(), nix::sys::termios::SetArg::TCSAFLUSH, &tty)?;
 
             let mut in_fds = nix::sys::select::FdSet::new();
 
@@ -81,7 +84,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error> >  {
                     }
                 }
 
-                // if the pseudterminal master has input available, this program reads some of that
+                // if the pseudo-terminal master has input available, this program reads some of that
                 // input and writes it to the terminal and file
                 if in_fds.contains(fork_result.master) {
                     let bytes_read = master_file.read(&mut buffer)?;
@@ -95,6 +98,9 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error> >  {
                     if bytes_written != bytes_read {
                         bail!("partial failed read[{}]/write[{}] (output file)", bytes_read, bytes_written);
                     }
+
+                    stdout.flush()?;
+                    output_file.flush()?;
                 }
 
             }
